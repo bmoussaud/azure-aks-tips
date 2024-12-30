@@ -34,13 +34,14 @@ tasks:
       - az network application-gateway create --name myApplicationGateway --resource-group $RG  --sku Standard_v2 --public-ip-address myPublicIp --vnet-name myVnet --subnet mySubnet --priority 100
   associate_application_gateway_to_aks:
     desc: associate the AKS cluster with the application gateway
-    #depends: [new_aks_cluster, new_application_gateway]
+    depends: [new_aks_cluster, new_application_gateway]
     cmds:
       - az network application-gateway show --resource-group $RG --name myApplicationGateway --query id --output tsv
       - az aks enable-addons --name agic-aks --resource-group $RG --addon ingress-appgw --appgw-id $(az network application-gateway show --resource-group $RG --name myApplicationGateway --query id --output tsv)
   
   peer_vnets:
     desc: peer the AKS VNET with the Application Gateway VNET
+    depends: [associate_application_gateway_to_aks]
     vars:
       nodeResourceGroup:
         sh: az aks show --resource-group {{.RG}} --name agic-aks --query nodeResourceGroup --output tsv 
@@ -58,9 +59,10 @@ tasks:
     desc: deploy a sample application
     depends: [aks_get_credentials]
     cmds:
-      - kubectl apply -f https://raw.githubusercontent.com/Azure/application-gateway-kubernetes-ingress/master/docs/examples/aspnetapp.yaml
-      - kubectl get ingress --watch
-      
+      - kubectl apply -f ./aspnetapp.yaml
+      - kubectl get ingress aspnetapp
+      - kubectl get service aspnetapp
+
   list_clusters:
     desc: "List AKS clusters"
     cmds:
