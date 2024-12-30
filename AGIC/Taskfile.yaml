@@ -1,0 +1,79 @@
+version: '3'
+# based on https://learn.microsoft.com/en-us/azure/application-gateway/tutorial-ingress-controller-add-on-existing
+
+env:
+  RG: agic-rg
+  LOCATION: francecentral
+dotenv: ['.env']
+
+tasks:
+  azure_auth:
+    desc: "Authenticate to Azure using Azure CLI"
+    cmds:
+      - az login
+    silent: false
+  create_resource_group:
+    desc: "Create a resource group ${RG} in $LOCATION"
+    cmds:
+      - az group create --name $RG --location $LOCATION
+    silent: false
+  new_aks_cluster:
+    desc: create a new AKS cluster
+    depends: [create_resource_group]
+    cmds:
+      - az provider register --namespace Microsoft.ContainerService
+      - az provider list --query "[?namespace=='Microsoft.ContainerService']" --output table
+      - az aks create --resource-group $RG --name agic-aks --node-count 1 --network-plugin azure --enable-managed-identity --generate-ssh-keys --tier Free --node-vm-size Standard_D4ds_v4
+    silent: false
+  new_application_gateway:
+    desc: create a new application gateway
+    depends: [create_resource_group]
+    cmds:
+      - az network public-ip create --name myPublicIp --resource-group $RG  --allocation-method Static --sku Standard
+      - az network vnet create --name myVnet --resource-group $RG  --address-prefix 10.0.0.0/16 --subnet-name mySubnet --subnet-prefix 10.0.0.0/24 
+      - az network application-gateway create --name myApplicationGateway --resource-group $RG  --sku Standard_v2 --public-ip-address myPublicIp --vnet-name myVnet --subnet mySubnet --priority 100
+  associate_application_gateway_to_aks:
+    desc: associate the AKS cluster with the application gateway
+    #depends: [new_aks_cluster, new_application_gateway]
+    cmds:
+      - az network application-gateway show --resource-group $RG --name myApplicationGateway --query id --output tsv
+      - az aks enable-addons --name agic-aks --resource-group $RG --addon ingress-appgw --appgw-id $(az network application-gateway show --resource-group $RG --name myApplicationGateway --query id --output tsv)
+  
+  peer_vnets:
+    desc: peer the AKS VNET with the Application Gateway VNET
+    vars:
+      nodeResourceGroup:
+        sh: az aks show --resource-group {{.RG}} --name agic-aks --query nodeResourceGroup --output tsv 
+      aksVnetName:
+        sh: az network vnet list --resource-group {{.nodeResourceGroup}} -o tsv --query "[0].name"
+      aksVnetId:
+        sh: az network vnet show --resource-group {{.nodeResourceGroup}} --name {{.aksVnetName}} --query id --output tsv
+      appGWVnetId:
+        sh: az network vnet show --name myVnet --resource-group {{.RG}} -o tsv --query "id"
+    cmds:
+      - az network vnet peering create --name AppGWtoAKSVnetPeering --resource-group $RG --vnet-name myVnet --remote-vnet {{.aksVnetId}} --allow-vnet-access
+      - az network vnet peering create --name AKStoAppGWVnetPeering --resource-group {{.nodeResourceGroup}} --vnet-name {{.aksVnetName}} --remote-vnet {{.appGWVnetId}} --allow-vnet-access
+  
+  deploy_application:
+    desc: deploy a sample application
+    depends: [aks_get_credentials]
+    cmds:
+      - kubectl apply -f https://raw.githubusercontent.com/Azure/application-gateway-kubernetes-ingress/master/docs/examples/aspnetapp.yaml
+      - kubectl get ingress --watch
+      
+  list_clusters:
+    desc: "List AKS clusters"
+    cmds:
+      - az aks list --resource-group $RG --output table
+    silent: false
+  aks_get_credentials:
+    desc: "Get credentials for AKS cluster"
+    cmds:
+      - az aks get-credentials --resource-group $RG --name agic-aks
+      - kubectl get nodes
+    silent: false
+  clean_up:
+    desc: "Clean up"
+    cmds:
+      - az group delete --name $RG --yes
+    silent: false
