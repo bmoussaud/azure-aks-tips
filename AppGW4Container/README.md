@@ -26,5 +26,5 @@ task verify_alb_controller
 https://learn.microsoft.com/en-us/azure/application-gateway/for-containers/quickstart-create-application-gateway-for-containers-byo-deployment
 
 ```
-task create_application_gateway4c
+task byo_create_application_gateway4c
 ``` 
