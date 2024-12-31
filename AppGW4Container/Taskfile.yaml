@@ -5,6 +5,7 @@ env:
   RG: agw4c-rg
   LOCATION: francecentral
   IDENTITY_RESOURCE_NAME: azure-alb-identity
+  ALB_SUBNET_NAME: subnet-alb
 dotenv: ['.env']
 
 tasks:
@@ -74,13 +75,80 @@ tasks:
     desc: "Assign Reader role to Azure Load Balancer Identity"
     vars:
       READER_ROLE_ID: "acdd72a7-3385-48ef-bd42-f606fba81ae7"
+      mcResourceGroup:
+        sh: az aks show --resource-group {{.RG}} --name agw4c-aks --query "nodeResourceGroup" -o tsv
+      mcResourceGroupId:
+        sh: az group show --name {{.mcResourceGroup}} --query id -otsv
+      principalId:
+        sh: az identity show --resource-group {{.RG}} --name {{.IDENTITY_RESOURCE_NAME}} --query principalId -otsv
     cmds:
-      - az role assignment create --role {{.READER_ROLE_ID}} --assignee $(az identity show --resource-group {{.RG}} --name {{.IDENTITY_RESOURCE_NAME}} --query principalId -otsv) --scope $(az group show --name {{.RG}} --query id -otsv)
+      - az role assignment create --assignee-object-id {{.principalId}} --assignee-principal-type ServicePrincipal --scope {{.mcResourceGroupId}} --role {{.READER_ROLE_ID}} # Reader role
 
   _set_up_federation_with_aks_oidc_issuer:
     desc: "Set up federation with AKS OIDC issuer"
     cmds:
-      - az identity federated-credential create --name "azure-alb-identity" --identity-name {{.IDENTITY_RESOURCE_NAME}} --resource-group {{.RG}} --issuer $(az aks show --resource-group {{.RG}}  --name agw4c-aks --query "oidcIssuerProfile.issuerUrl" -o tsv)  --subject "system:serviceaccount:azure-alb-system:alb-controller-sa"
+      - az identity federated-credential create --name "azure-alb-identity" --identity-name {{.IDENTITY_RESOURCE_NAME}} --resource-group {{.RG}} --issuer $(az aks show --resource-group {{.RG}}  --name agw4c-aks --query "oidcIssuerProfile.issuerUrl" -o tsv)  --subject "system:serviceaccount:azure-alb-system-controller:alb-controller-sa"
+
+
+  new_subnet_and_delegate_identity:
+    desc: "Create a new subnet in AKS managed virtual network"
+    vars:
+      MC_RESOURCE_GROUP:
+        sh: az aks show --name agw4c-aks --resource-group {{.RG}} --query "nodeResourceGroup" -o tsv
+      CLUSTER_SUBNET_ID:
+        sh: az vmss list --resource-group {{.MC_RESOURCE_GROUP}} --query '[0].virtualMachineProfile.networkProfile.networkInterfaceConfigurations[0].ipConfigurations[0].subnet.id' -o tsv
+      VNET_NAME:
+        sh: az network vnet show --ids {{.CLUSTER_SUBNET_ID}}  --query 'name' -o tsv
+      VNET_RESOURCE_GROUP:
+        sh: az network vnet show --ids {{.CLUSTER_SUBNET_ID}}  --query 'resourceGroup' -o tsv
+      VNET_ID:
+        sh: az network vnet show --ids {{.CLUSTER_SUBNET_ID}} --query id -o tsv
+    cmds:
+      - echo "{{.CLUSTER_SUBNET_ID}}"
+      - echo "{{.MC_RESOURCE_GROUP}}"
+      - echo "{{.VNET_NAME}}"
+      - echo "{{.VNET_RESOURCE_GROUP}}"
+      - echo "{{.VNET_ID}}"
+      #- az network vnet show --ids {{.CLUSTER_SUBNET_ID}}
+      # Docs mention at least 256 available IP but received'subnet-alb' does not have enough IPv4 addresses. At least 500 addresses are required to create Association resource. => /22
+      - az network vnet subnet create --resource-group {{.VNET_RESOURCE_GROUP}} --vnet-name {{.VNET_NAME}} --name {{.ALB_SUBNET_NAME}} --address-prefixes 10.225.0.0/22 --delegations 'Microsoft.ServiceNetworking/trafficControllers'
+      - az network vnet subnet show --name {{.ALB_SUBNET_NAME}} --resource-group {{.VNET_RESOURCE_GROUP}} --vnet-name {{.VNET_NAME}} --query '[id]' --output tsv
+      - task: _delegate_permissions_to_managed_identity
+        vars:
+          ALB_SUBNET_ID:
+            sh: az network vnet subnet show --name {{.ALB_SUBNET_NAME}} --resource-group {{.VNET_RESOURCE_GROUP}} --vnet-name {{.VNET_NAME}} --query '[id]' --output tsv
+      - task: _generate_alb_yaml_definition
+        vars:
+          ALB_SUBNET_ID:
+            sh: az network vnet subnet show --name {{.ALB_SUBNET_NAME}} --resource-group {{.VNET_RESOURCE_GROUP}} --vnet-name {{.VNET_NAME}} --query '[id]' --output tsv
+          
+      
+  _delegate_permissions_to_managed_identity:
+    desc: "ALB Controller needs the ability to provision new Application Gateway for Containers resources and to join the subnet intended for the Application Gateway for Containers association resource."
+    vars:
+      principalId:
+        sh: az identity show --resource-group {{.RG}} --name {{.IDENTITY_RESOURCE_NAME}} --query principalId -otsv
+      MC_RESOURCE_GROUP:
+        sh: az aks show --name agw4c-aks --resource-group {{.RG}} --query "nodeResourceGroup" -o tsv
+      mcResourceGroupId :
+        sh: az group show --name {{.MC_RESOURCE_GROUP}} --query id -otsv
+    cmds:
+      - echo "Delegate AppGw for Containers Configuration Manager role to AKS Managed Cluster RG"
+      - az role assignment create --assignee-object-id {{.principalId}} --assignee-principal-type ServicePrincipal --scope {{.mcResourceGroupId}} --role "fbc52c3f-28ad-4303-a892-8a056630b8f1" 
+      - echo "Delegate Network Contributor permission for join to association subnet "
+      - az role assignment create --assignee-object-id {{.principalId}} --assignee-principal-type ServicePrincipal --scope {{.ALB_SUBNET_ID}} --role "4d97b98b-1d4f-4787-a291-c67834d212e7" 
+
+  _generate_alb_yaml_definition:
+    desc: "Generate YAML definition for Azure Load Balancer"
+    cmds:
+      - ALB_SUBNET_ID={{.ALB_SUBNET_ID}} envsubst < ./alb-template.yaml > ./test_alb.yaml
+
+  test_gateway:
+    desc: "Test Application Gateway"
+    cmds:
+      - kubectl apply -f ./test_ns.yaml
+      - kubectl apply -f ./test_alb.yaml
+      - kubectl get applicationloadbalancer alb-test -n alb-test-infra -o yaml -w
 
   list_clusters:
     desc: "List AKS clusters"

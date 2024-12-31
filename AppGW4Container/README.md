@@ -54,6 +54,16 @@ status:
     type: Accepted
 ```
 
+## Application Gateway for Containers managed by ALB Controller
+
+https://learn.microsoft.com/en-us/azure/application-gateway/for-containers/quickstart-create-application-gateway-for-containers-managed-by-alb-controller?tabs=new-subnet-aks-vnet
+
+
+```
+task new_subnet_and_delegate_identity
+```
+
+
 ## Application Gateway for Containers: bring your own deployment
 
 https://learn.microsoft.com/en-us/azure/application-gateway/for-containers/quickstart-create-application-gateway-for-containers-byo-deployment
