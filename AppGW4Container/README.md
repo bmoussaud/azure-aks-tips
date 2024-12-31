@@ -61,13 +61,42 @@ https://learn.microsoft.com/en-us/azure/application-gateway/for-containers/quick
 
 ```
 task new_subnet_and_delegate_identity
+task deploy_application_loabalancer
+task deploy_application
+task connect_application
 ```
 
+The test is a success is the output looks like this, with a new header (`AGC-Header-Add`)
+````
+{
+ "path": "/",
+ "host": "contoso.com",
+ "method": "GET",
+ "proto": "HTTP/1.1",
+ "headers": {
+  "Accept": [
+   "*/*"
+  ],
+  "Agc-Header-Add": [
+   "AGC-value"
+  ],
+  "User-Agent": [
+   "rewritten-user-agent"
+  ],
+  "X-Forwarded-For": [
+   "88.121.146.30"
+  ],
+  "X-Forwarded-Proto": [
+   "http"
+  ],
+  "X-Request-Id": [
+   "7c2f5012-ac0d-4faf-93ad-350f81ac4c2d"
+  ]
+ },
+ "namespace": "test-infra",
+ "ingress": "",
+ "service": "",
+ "pod": "backend-v1-56d99ddb49-lgjb2"
+}
+````                                       
 
-## Application Gateway for Containers: bring your own deployment
-
-https://learn.microsoft.com/en-us/azure/application-gateway/for-containers/quickstart-create-application-gateway-for-containers-byo-deployment
-
-```
-task byo_create_application_gateway4c
-``` 

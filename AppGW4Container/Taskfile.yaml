@@ -143,18 +143,12 @@ tasks:
     cmds:
       - ALB_SUBNET_ID={{.ALB_SUBNET_ID}} envsubst < ./alb-template.yaml > ./test_alb.yaml
 
-  test_gateway:
-    desc: "Test Application Gateway"
+  deploy_application_loabalancer:
+    desc: "Deploy Application Load Balancer"
     cmds:
-      - kubectl apply -f ./test_ns.yaml
       - kubectl apply -f ./test_alb.yaml
       - kubectl get applicationloadbalancer alb-test -n alb-test-infra -o yaml -w
 
-  list_clusters:
-    desc: "List AKS clusters"
-    cmds:
-      - az aks list --resource-group $RG --output table
-    silent: false
   aks_get_credentials:
     desc: "Get credentials for AKS cluster"
     cmds:
@@ -166,9 +160,22 @@ tasks:
     desc: deploy a sample application
     depends: [aks_get_credentials]
     cmds:
-      - kubectl apply -f ./aspnetapp.yaml
-      - kubectl get ingress aspnetapp
-      - kubectl get service aspnetapp
+      - kubectl apply -f https://raw.githubusercontent.com/MicrosoftDocs/azure-docs/refs/heads/main/articles/application-gateway/for-containers/examples/traffic-split-scenario/deployment.yaml
+      - kubectl apply -f test_ingress.yaml
+      - kubectl get ingress -n test-infra
+      - kubectl get service -n test-infra
+
+  connect_application:
+    desc: "Connect to the application"
+    depends: [aks_get_credentials]
+    vars:
+      fqdn:
+        sh: kubectl get ingress -n test-infra ingress-01 -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+      fqdnip:
+        sh: dig +short {{.fqdn}}
+    cmds:
+      - kubectl get ingress -n test-infra
+      - curl -k --resolve contoso.com:80:{{.fqdnip}} http://contoso.com
 
   clean_up:
     desc: "Clean up"

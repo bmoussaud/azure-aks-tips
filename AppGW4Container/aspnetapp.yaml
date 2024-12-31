@@ -6,8 +6,17 @@ metadata:
     app: aspnetapp
 spec:
   containers:
-  - image: "mcr.microsoft.com/dotnet/samples:aspnetapp"
+  - image: gcr.io/k8s-staging-ingressconformance/echoserver:v20221109-7ee2f3e
     name: aspnetapp-image
+    env:
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    - name: NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
     ports:
     - containerPort: 8080
       protocol: TCP
@@ -34,10 +43,14 @@ metadata:
   name: aspnetapp
   # annotations:
   #   kubernetes.io/ingress.class: azure/application-gateway
+  annotations:
+    alb.networking.azure.io/alb-name: alb-test
+    alb.networking.azure.io/alb-namespace: alb-test-infra
 spec:
-  ingressClassName: azure-application-gateway
+  ingressClassName: azure-alb-external
   rules:
-  - http:
+  - host: contoso.com
+    http:
       paths:
       - path: /
         backend:
@@ -46,3 +59,5 @@ spec:
             port:
               number: 80
         pathType: Exact
+
+
