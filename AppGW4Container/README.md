@@ -21,6 +21,39 @@ task deploy_alb_controller
 task verify_alb_controller
 ``` 
 
+The output of the verify task should be something like this
+
+```
+ $ task verify_alb_controller
+task: [aks_get_credentials] az aks get-credentials --resource-group $RG --name agw4c-aks
+Merged "agw4c-aks" as current context in /home/vscode/.kube/config
+...
+task: [verify_alb_controller] kubectl get pods -n azure-alb-system-controller
+NAME                                        READY   STATUS    RESTARTS   AGE
+alb-controller-554cb56cdd-hqlv7             1/1     Running   0          73s
+alb-controller-554cb56cdd-tvhrx             1/1     Running   0          73s
+alb-controller-bootstrap-659d6567cb-8dzqp   1/1     Running   0          73s
+task: [verify_alb_controller] kubectl get gatewayclass azure-alb-external -o yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  creationTimestamp: "2024-12-31T07:58:28Z"
+  generation: 1
+  name: azure-alb-external
+  resourceVersion: "2499"
+  uid: 0068c8cb-c22c-477f-8e02-33274ae863d5
+spec:
+  controllerName: alb.networking.azure.io/alb-controller
+status:
+  conditions:
+  - lastTransitionTime: "2024-12-31T07:58:40Z"
+    message: Valid GatewayClass
+    observedGeneration: 1
+    reason: Accepted
+    status: "True"
+    type: Accepted
+```
+
 ## Application Gateway for Containers: bring your own deployment
 
 https://learn.microsoft.com/en-us/azure/application-gateway/for-containers/quickstart-create-application-gateway-for-containers-byo-deployment
