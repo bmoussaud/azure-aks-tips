@@ -100,3 +100,31 @@ The test is a success is the output looks like this, with a new header (`AGC-Hea
 }
 ````                                       
 
+### ApplicationLoadBalancer Example:
+
+```
+apiVersion: alb.networking.azure.io/v1
+kind: ApplicationLoadBalancer
+metadata:
+  name: alb-test
+  namespace: alb-test-infra
+spec:
+  associations:
+  - /subscriptions/9479b396-5d3e-467a-b89f-ba8400aeb7dd/resourceGroups/MC_agw4c-rg_agw4c-aks_francecentral/providers/Microsoft.Network/virtualNetworks/aks-vnet-37355073/subnets/subnet-alb`
+```
+
+### Application Gateway 4 Container
+Created once the `ApplicationLoadBalancer` CRD deloyed in the AKS cluster.
+![Application Gateway 4 Container](img/applicationgateway4containers.png)
+
+### Application Gateway 4 Container Association
+Created once the `ApplicationLoadBalancer` CRD deloyed in the AKS cluster, it shows the association with the alb vnet
+![Application Gateway 4 Container](img/applicationgateway4containers-association.png)
+
+
+### Application Gateway 4 Container Frontend
+Created once the `Ingress` ot `Gateway` CRD deloyed in the AKS cluster
+
+**Warning**: *Application Gateway for Containers cannot have more than 5 Frontends*
+
+![Application Gateway 4 Container](img/applicationgateway4containers-frontend.png)

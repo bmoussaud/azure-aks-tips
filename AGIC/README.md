@@ -15,7 +15,7 @@ task deploy_application
 ``` 
 
 ### Application Gateway Ingress Controller Associated to AKS
-![Application Gateway Ingress Controller Associated to AKS](img/AKS_VirtualNetworkIngration.png)
+    ![Application Gateway Ingress Controller Associated to AKS](img/AKS_VirtualNetworkIngration.png)
 
 ### PublicIp -> Application Gateway
 ![vNet3](img/vNet3.png)
