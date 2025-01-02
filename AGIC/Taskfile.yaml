@@ -19,7 +19,7 @@ tasks:
     silent: false
   new_aks_cluster:
     desc: create a new AKS cluster
-    depends: [create_resource_group]
+    deps: [create_resource_group]
     cmds:
       - az provider register --namespace Microsoft.ContainerService
       - az provider list --query "[?namespace=='Microsoft.ContainerService']" --output table
