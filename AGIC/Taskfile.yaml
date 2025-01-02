@@ -66,16 +66,16 @@ tasks:
   list_clusters:
     desc: "List AKS clusters"
     cmds:
-      - az aks list --resource-group $RG --output table
+      - az aks list --resource-group {{.RG}} --output table
     silent: false
   aks_get_credentials:
     desc: "Get credentials for AKS cluster"
     cmds:
-      - az aks get-credentials --resource-group $RG --name agic-aks
+      - az aks get-credentials --resource-group {{.RG}} --name agic-aks
       - kubectl get nodes
     silent: false
   clean_up:
     desc: "Clean up"
     cmds:
-      - az group delete --name $RG --yes
+      - az group delete --name {{.RG}} --yes
     silent: false

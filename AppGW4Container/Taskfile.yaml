@@ -52,7 +52,7 @@ tasks:
       CONTROLLER_NAMESPACE: "azure-alb-system-controller"
       HELM_NAMESPACE: "azure-alb-system-helm"
     cmds:
-      - helm install alb-controller oci://mcr.microsoft.com/application-lb/charts/alb-controller --namespace {{.HELM_NAMESPACE}} --version 1.3.7 --set albController.namespace={{.CONTROLLER_NAMESPACE}} --set albController.podIdentity.clientID=$(az identity show -g {{.RG}} -n azure-alb-identity --query clientId -o tsv) --create-namespace 
+      - helm install alb-controller oci://mcr.microsoft.com/application-lb/charts/alb-controller --namespace {{.HELM_NAMESPACE}} --version 1.3.7 --set albController.namespace={{.CONTROLLER_NAMESPACE}} --set albController.podIdentity.clientID=$(az identity show -g {{.RG}} -n {{.IDENTITY_RESOURCE_NAME}} --query clientId -o tsv) --create-namespace 
     silent: false
     
   verify_alb_controller:
@@ -163,7 +163,6 @@ tasks:
       - kubectl apply -f https://raw.githubusercontent.com/MicrosoftDocs/azure-docs/refs/heads/main/articles/application-gateway/for-containers/examples/traffic-split-scenario/deployment.yaml
       - kubectl apply -f test_ingress.yaml
       - kubectl get ingress -n test-infra
-      - kubectl get service -n test-infra
 
   connect_application:
     desc: "Connect to the application"
@@ -180,5 +179,5 @@ tasks:
   clean_up:
     desc: "Clean up"
     cmds:
-      - az group delete --name $RG --yes
+      - az group delete --name {{.RG}} --yes
     silent: false
