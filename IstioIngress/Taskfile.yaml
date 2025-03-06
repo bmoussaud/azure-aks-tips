@@ -71,6 +71,6 @@ tasks:
   clean_up:
     desc: "Clean up"
     cmds:
-      - az group delete --name {{.RG}} --yes
+      - az group delete --name {{.RG}} --yes --no-wait
     silent: false
   
