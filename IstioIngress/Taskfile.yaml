@@ -1,0 +1,76 @@
+version: '3'
+# based on https://learn.microsoft.com/en-us/azure/application-gateway/tutorial-ingress-controller-add-on-existing
+
+env:
+  RG: istio-rg
+  CLUSTER: istio-aks
+  LOCATION: francecentral
+  IDENTITY_RESOURCE_NAME: azure-alb-identity
+  ALB_SUBNET_NAME: subnet-alb
+dotenv: ['.env']
+
+tasks:
+  azure_auth:
+    desc: "Authenticate to Azure using Azure CLI"
+    cmds:
+      - az login
+    silent: false
+
+  azure_config:
+    desc: "Configure Azure CLI"
+    cmds:
+      - az provider register --namespace Microsoft.ContainerService
+      - az provider register --namespace Microsoft.Network
+      - az provider register --namespace Microsoft.NetworkFunction
+      - az provider register --namespace Microsoft.ServiceNetworking
+      - az aks mesh get-revisions --location ${LOCATION} -o table
+      - az extension add --name alb
+  
+  create_resource_group:
+    desc: "Create a resource group ${RG} in $LOCATION"
+    cmds:
+      - az group create --name $RG --location $LOCATION
+    silent: false
+  
+  new_aks_cluster:
+    desc: create a new AKS cluster
+    deps: [create_resource_group, azure_config]
+    cmds:
+      - az aks create --resource-group $RG --name $CLUSTER --node-count 1 --enable-asm --enable-oidc-issuer --enable-workload-identity --enable-managed-identity --generate-ssh-keys --tier Free --node-vm-size Standard_D4ds_v4
+      - #az aks mesh enable --resource-group $RG --name $CLUSTER
+      - az aks show --resource-group $RG --name $CLUSTER  --query 'serviceMeshProfile.mode'
+    silent: false
+  
+  deploy_external_ingress:
+    desc: "Create an external ISTIO ingress controller"
+    # https://learn.microsoft.com/en-us/azure/aks/istio-deploy-ingress#enable-external-ingress-gateway
+    cmds:
+      - az aks mesh enable-ingress-gateway --resource-group $RG --name $CLUSTER --ingress-gateway-type external
+      - kubectl get svc aks-istio-ingressgateway-external -n aks-istio-ingress
+  deploy_sample_apps:
+    desc: "Deploy sample applications"
+    cmds:
+      - kubectl create namespace bookinfo
+      - kubectl apply -n bookinfo -f https://raw.githubusercontent.com/istio/istio/release-1.25/samples/bookinfo/platform/kube/bookinfo.yaml
+      - kubectl apply -n bookinfo -f external_ingress.yaml
+  aks_get_credentials:
+    desc: "Get credentials for AKS cluster"
+    cmds:
+      - az aks get-credentials --resource-group {{.RG}} --name $CLUSTER
+      - kubectl get nodes
+    silent: false
+  test_external_ingress:
+    desc: "Test the deployment"
+    vars:
+      INGRESS_HOST:
+        sh: kubectl -n aks-istio-ingress get service aks-istio-ingressgateway-external -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+      INGRESS_PORT:
+        sh: kubectl -n aks-istio-ingress get service aks-istio-ingressgateway-external -o jsonpath='{.spec.ports[?(@.name=="http2")].port}'
+    cmds:
+      - curl -s  http://{{.INGRESS_HOST}}:{{.INGRESS_PORT}}/productpage | grep -o "<title>.*</title>"
+  clean_up:
+    desc: "Clean up"
+    cmds:
+      - az group delete --name {{.RG}} --yes
+    silent: false
+  
