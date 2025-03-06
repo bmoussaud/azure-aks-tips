@@ -1,0 +1,70 @@
+version: '3'
+# based on https://learn.microsoft.com/en-us/azure/aks/app-routing
+
+env:
+  RG: ngnix-rg
+  CLUSTER: ngnix-aks
+  LOCATION: francecentral
+dotenv: ['.env']
+
+tasks:
+  azure_auth:
+    desc: "Authenticate to Azure using Azure CLI"
+    cmds:
+      - az login
+    silent: false
+
+  azure_config:
+    desc: "Configure Azure CLI"
+    cmds:
+      - echo "Azure CLI configured"
+  
+  create_resource_group:
+    desc: "Create a resource group ${RG} in $LOCATION"
+    cmds:
+      - az group create --name $RG --location $LOCATION
+    silent: false
+  
+  new_aks_cluster:
+    desc: create a new AKS cluster
+    deps: [create_resource_group, azure_config]
+    cmds:
+      - az aks create --resource-group $RG --name $CLUSTER --node-count 1 --enable-app-routing  --enable-oidc-issuer --enable-workload-identity --enable-managed-identity --generate-ssh-keys --tier Free --node-vm-size Standard_D4ds_v4
+    silent: false
+  
+  deploy_external_ingress:
+    desc: "Create an external ISTIO ingress controller"
+    # https://learn.microsoft.com/en-us/azure/aks/istio-deploy-ingress#enable-external-ingress-gateway
+    cmds:
+      - az aks mesh enable-ingress-gateway --resource-group $RG --name $CLUSTER --ingress-gateway-type external
+    silent: false
+
+  deploy_sample_apps:
+    desc: "Deploy sample applications"
+    deps: [aks_get_credentials]
+    cmds:
+      - #kubectl create namespace aks-store
+      - kubectl apply -f https://raw.githubusercontent.com/Azure-Samples/aks-store-demo/main/sample-manifests/docs/app-routing/aks-store-deployments-and-services.yaml -n aks-store
+      - kubectl apply -f ingress.yaml -n aks-store
+      - cat ingress.yaml
+  aks_get_credentials:
+    desc: "Get credentials for AKS cluster"
+    cmds:
+      - az aks get-credentials --resource-group {{.RG}} --name {{.CLUSTER}}
+      - kubectl get nodes
+    silent: false
+  test_external_ingress:
+    desc: "Test the deployment"
+    vars:
+      INGRESS_HOST:
+        sh: kubectl get ingress -n aks-store store-front  -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+      INGRESS_PORT:
+        sh: kubectl get ingress -n aks-store store-front  -o jsonpath='{.spec.ports[?(@.name=="http2")].port}'
+    cmds:
+      - curl -s  http://{{.INGRESS_HOST}}:{{.INGRESS_PORT}} | grep -o "<title>.*</title>"
+  clean_up:
+    desc: "Clean up"
+    cmds:
+      - az group delete --name {{.RG}} --yes --no-wait
+    silent: false
+  
