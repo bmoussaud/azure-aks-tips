@@ -51,7 +51,10 @@
 		"vscode": {
 			// Set *default* container specific settings.json values on container create.
 			"settings": {
-				"python.defaultInterpreterPath": "/usr/local/bin/python"
+				"python.defaultInterpreterPath": "/usr/local/bin/python",
+				"dotfiles.repository": "bmoussaud/dotfiles",
+  				"dotfiles.targetPath": "~/dotfiles",
+  				"dotfiles.installCommand": "install.sh"
 			},
 			// installs useful extensions
 			"extensions": [
@@ -80,4 +83,7 @@
 	// "postStartCommand": "",
 	// 12. Use 'postAttachCommand' to run a command each time a tool attaches to the container successfully. 
 	// "postAttachCommand": "",
+	"hostRequirements": {
+        "memory": "8gb"
+    }
 }

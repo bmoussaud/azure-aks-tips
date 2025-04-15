@@ -1,0 +1,166 @@
+version: '3'
+# based on https://github.com/kubernetes-sigs/blob-csi-driver/blob/master/deploy/example/blobfuse-mi/README.md
+# https://stackoverflow.com/questions/78981524/use-managed-identity-to-access-storage-account-with-persistent-volume-in-aks
+# https://github.com/kubernetes-sigs/azurefile-csi-driver
+
+env:
+  xRG: aks-and-storage-account-group
+  xCLUSTER: storage-aks
+  xLOCATION: francecentral
+  xSTORAGE_ACCOUNT: aksstoragebmoussaud
+  xACR_NAME: aksbmoussaudacr
+  xIDENTITY_NAME: storage-aks-identity
+  xSHARED_NAME: mymodelfileshare
+  xCONTAINER_NAME: mymodelcontainer
+  IMAGE_VERSION: 1.32
+
+vars:
+  CLUSTER:
+    sh: azd env get-value CLUSTER 
+  RG:
+    sh: azd env get-value RG
+  SHARED_NAME:
+    sh: azd env get-value SHARED_NAME
+  CONTAINER_NAME:
+    sh: azd env get-value CONTAINER_NAME
+  STORAGE_ACCOUNT:
+    sh: azd env get-value STORAGE_ACCOUNT
+  SHARED_NAME:
+    sh: azd env get-value SHARED_NAME
+  ACR_NAME:
+    sh: azd env get-value ACR_NAME
+  
+tasks:  
+  build_acr_python_ai:
+    desc: "Build the ACR for Python AI"
+    cmds:
+      - az acr build --registry {{.ACR_NAME}} --image bmoussaud_python_ai:0.1 python-ai
+    silent: false
+
+  build_acr:
+    desc: "Build the ACR"
+    cmds:
+      - az acr build --registry {{.ACR_NAME}} --image storage_service:{{.IMAGE_VERSION}} src
+    silent: false
+  
+  deploy_app:
+    desc: "Deploy the application"
+    deps: [aks_get_credentials]
+    dotenv:
+      - .azure/dev/.env
+    cmds:
+      - echo "Deploying the application {{.SHARED_NAME}} and {{.CONTAINER_NAME}}"
+      - envsubst < k8s/storage.yaml | cat
+      - envsubst < k8s/storage.yaml | kubectl apply -f -
+      - until kubectl get persistentvolumeclaim/storage-service-container-pvc -o jsonpath='{.status.phase}' | grep -q "Bound"; do echo "Waiting for PVC to be bound..."; sleep 5; done
+      - until kubectl get persistentvolumeclaim/storage-service-shared-pvc -o jsonpath='{.status.phase}' | grep -q "Bound"; do echo "Waiting for PVC to be bound..."; sleep 5; done
+      - envsubst < k8s/deployment-app.yaml | kubectl apply -f -
+      - kubectl get pods
+      - kubectl wait --for=condition=Available deployments.apps/deployment-storage-service   --timeout=60s
+      - kubectl wait --for=condition=Ready pods -l app=storage-service
+      - kubectl get pods -l app=storage-service
+      - envsubst < k8s/network.yaml | kubectl apply -f -
+    silent: false
+
+  undeploy_app:
+    desc: "Clean up resources"
+    cmds:
+      - cmd: kubectl delete deployment deployment-storage-service
+        ignore_error: true
+      - cmd: kubectl delete persistentvolumeclaim/storage-service-container-pvc
+        ignore_error: true
+      - cmd: kubectl delete persistentvolumeclaim/storage-service-shared-pvc
+        ignore_error: true
+      - cmd: kubectl delete persistentvolume/storage-service-pv-container
+        ignore_error: true
+      - cmd: kubectl delete persistentvolume/storage-service-pv-shared
+        ignore_error: true
+    
+  smoke_tests:
+    desc: "Run smoke tests"
+    vars:
+      ip:
+        sh: kubectl get svc nginx --namespace app-routing-system -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+      port:
+        sh: kubectl get svc nginx --namespace app-routing-system -o jsonpath='{.spec.ports[0].port}'
+    cmds:
+      - curl http://{{.ip}}:{{.port}}
+      - curl -X POST http://{{.ip}}:{{.port}}/write-content/shared
+      - curl -X POST http://{{.ip}}:{{.port}}/write-content/container
+
+
+
+ 
+  deploy_storage_samples_fileshare:
+    desc: "Deploy the storage class"
+    deps: [aks_get_credentials]
+    dotenv:
+      - .azure/dev/.env
+    cmds:
+      - echo "Deploying the storage class {{.SHARED_NAME}} and {{.CONTAINER_NAME}}"
+      - envsubst < azurefile-shared-pv.yaml | kubectl apply -f -
+      - envsubst < azurefile-shared-pvc.yaml | kubectl apply -f -
+      - kubectl get persistentvolume/azurefile-pv-shared
+      - kubectl get persistentvolumeclaim/azurefile-shared-pvc
+      - until kubectl get persistentvolumeclaim/azurefile-shared-pvc -o jsonpath='{.status.phase}' | grep -q "Bound"; do echo "Waiting for PVC to be bound..."; sleep 5; done
+      - kubectl get persistentvolumeclaim/azurefile-shared-pvc
+      - kubectl apply -f deployment-shared.yaml
+      - kubectl get pods
+      - kubectl wait --for=condition=Available deployment/deployment-shared --timeout=60s
+      - kubectl wait --for=condition=Ready pods -l app=nginx-shared
+      - kubectl get pods -l app=nginx-shared
+    silent: false
+
+  undeploy_storage_samples_fileshare:
+    desc: "Clean up resources"
+    cmds:
+      - kubectl delete deployment deployment-shared
+      - kubectl delete persistentvolumeclaim/azurefile-shared-pvc
+      - kubectl delete persistentvolume/azurefile-pv-shared 
+    silent: false
+
+  deploy_storage_samples_container:
+    desc: "Deploy the storage class"
+    deps: [aks_get_credentials]
+    dotenv:
+      - .azure/dev/.env
+    cmds:
+      - envsubst < azurefile-container-pv.yaml | kubectl apply -f -
+      - envsubst < azurefile-container-pvc.yaml | kubectl apply -f -
+      - kubectl get persistentvolume/azurefile-pv-container
+      - kubectl get persistentvolumeclaim/azurefile-container-pvc
+      - until kubectl get persistentvolumeclaim/azurefile-container-pvc -o jsonpath='{.status.phase}' | grep -q "Bound"; do echo "Waiting for PVC to be bound..."; sleep 5; done
+      - kubectl get persistentvolumeclaim/azurefile-container-pvc
+      - kubectl apply -f deployment-container.yaml
+      - kubectl get pods
+      - kubectl wait --for=condition=Available deployment/deployment-container --timeout=60s
+      - kubectl wait --for=condition=Ready pods -l app=nginx-container
+      - kubectl get pods -l app=nginx-container 
+    silent: false
+     
+  undeploy_storage_samples_container:
+    desc: "Clean up resources"
+    cmds:
+      - kubectl delete deployment deployment-container
+      - kubectl delete persistentvolumeclaim/azurefile-container-pvc
+      - kubectl delete persistentvolume/azurefile-pv-container 
+    silent: false
+  
+ 
+  aks_get_credentials:
+    desc: "Get credentials for AKS cluster"
+    cmds:
+      - cmd: kubectl config delete-cluster {{.CLUSTER}} 
+        ignore_error: true
+      - cmd: kubectl config delete-user clusterUser_{{.RG}}_{{.CLUSTER}}
+        ignore_error: true
+      - az aks get-credentials --resource-group {{.RG}} --name {{.CLUSTER}}
+      - kubectl get nodes
+    silent: false
+  
+  cleanup:
+    desc: "Clean up"
+    cmds:
+      - az group delete --name {{.RG}} --yes --no-wait
+    silent: false
+  

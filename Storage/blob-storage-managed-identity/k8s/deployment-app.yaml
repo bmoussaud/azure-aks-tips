@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: storage-service
+  name: deployment-storage-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: storage-service
+  template:
+    metadata:
+      labels:
+        app: storage-service
+      name: storage-service
+    spec:
+      containers:
+        - name: storage-service
+          imagePullPolicy: Always
+          image: ${ACR_NAME}.azurecr.io/storage_service:${IMAGE_VERSION}
+          volumeMounts:
+            - name: container
+              mountPath: "/mnt/container"
+              readOnly: false
+            - name: shared
+              mountPath: "/mnt/shared"
+              readOnly: false
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: storage-service-shared-pvc
+        - name: container
+          persistentVolumeClaim:
+            claimName: storage-service-container-pvc
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate

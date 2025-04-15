@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: azurefile-pv-shared
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: azureblob-nfs-premium
+  csi:
+    driver: file.csi.azure.com
+    readOnly: false
+    volumeHandle: ${RG}#${STORAGE_ACCOUNT}#${SHARED_NAME}
+    #volumeHandle: "{resource-group-name}#{account-name}#{file-share-name}" # i don't if it should be a value like this or the one above
+    volumeAttributes:
+      resourceGroup: ${RG}
+      storageAccount: ${STORAGE_ACCOUNT}
+      shareName: ${SHARED_NAME}
+      #useAAD: "true"
+      #azureStorageIdentityClientID: ${AZURE_CLIENT_ID}  # Use your managed identity Client ID here

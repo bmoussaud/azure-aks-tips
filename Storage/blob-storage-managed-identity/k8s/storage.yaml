@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: storage-service-pv-container
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: azureblob-fuse-premium
+  csi:
+    driver: blob.csi.azure.com
+    readOnly: false
+    volumeHandle: ${RG}#${STORAGE_ACCOUNT}#${CONTAINER_NAME}
+    #volumeHandle: "{resource-group-name}#{account-name}#{container-name}" # i don't if it should be a value like this or the one above
+    volumeAttributes:
+      resourceGroup: ${RG}
+      storageAccount: ${STORAGE_ACCOUNT}
+      containername: ${CONTAINER_NAME}
+      #useAAD: "true"
+      #azureStorageIdentityClientID: ${AZURE_CLIENT_ID}  # Use your managed identity Client ID here
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-service-container-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+  volumeName: storage-service-pv-container
+  storageClassName: azureblob-fuse-premium
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: storage-service-pv-shared
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: azureblob-nfs-premium
+  csi:
+    driver: file.csi.azure.com
+    readOnly: false
+    volumeHandle: ${RG}#${STORAGE_ACCOUNT}#${SHARED_NAME}
+    #volumeHandle: "{resource-group-name}#{account-name}#{file-share-name}" # i don't if it should be a value like this or the one above
+    volumeAttributes:
+      resourceGroup: ${RG}
+      storageAccount: ${STORAGE_ACCOUNT}
+      shareName: ${SHARED_NAME}
+      #useAAD: "true"
+      #azureStorageIdentityClientID: ${AZURE_CLIENT_ID}  # Use your managed identity Client ID here
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-service-shared-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+  volumeName: storage-service-pv-shared
+  storageClassName: azureblob-nfs-premium

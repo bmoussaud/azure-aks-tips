@@ -1,0 +1,267 @@
+version: '3'
+# based on https://github.com/kubernetes-sigs/blob-csi-driver/blob/master/deploy/example/blobfuse-mi/README.md
+# https://stackoverflow.com/questions/78981524/use-managed-identity-to-access-storage-account-with-persistent-volume-in-aks
+# https://github.com/kubernetes-sigs/azurefile-csi-driver
+
+env:
+  RG: aks-and-storage-account-group
+  CLUSTER: storage-aks
+  LOCATION: francecentral
+  STORAGE_ACCOUNT: aksstoragebmoussaud
+  ACR_NAME: aksbmoussaudacr
+  IDENTITY_NAME: storage-aks-identity
+  SHARED_NAME: mymodelfileshare
+  CONTAINER_NAME: mymodelcontainer
+  IMAGE_VERSION: 1.32
+
+tasks:
+  azure_auth:
+    desc: "Authenticate to Azure using Azure CLI"
+    cmds:
+      - az login
+    silent: false
+
+  azure_config:
+    desc: "Configure Azure CLI"
+    cmds:
+      - echo "Azure CLI configured"
+  
+  create_resource_group:
+    desc: "Create a resource group ${RG} in {{.LOCATION}}"
+    cmds:
+      - az group create --name {{.RG}} --location {{.LOCATION}}
+    silent: false
+
+  # create a managed identity
+  # https://learn.microsoft.com/en-us/azure/aks/managed-identity
+  # https://learn.microsoft.com/en-us/azure/aks/managed-identity-blobfuse
+  create_storage:
+    desc: "Create a storage account"
+    deps: [create_resource_group]
+    cmds:
+      #- az identity create --name {{.IDENTITY_NAME}} --resource-group {{.RG}} 
+      #- az identity show --name {{.IDENTITY_NAME}} --resource-group {{.RG}} --query clientId -o tsv
+      - az storage account create --name {{.STORAGE_ACCOUNT}} --resource-group {{.RG}} --location {{.LOCATION}} --sku Standard_LRS
+      - az storage container create --name {{.CONTAINER_NAME}} --account-name {{.STORAGE_ACCOUNT}}
+      - az storage share create --name {{.SHARED_NAME}} --account-name {{.STORAGE_ACCOUNT}}
+    silent: false
+  
+  #grant Storage Blob Data Contributor role to the resource group where the storage account is located
+  assign_role_not_used:
+    desc: "Assign the Storage Blob Data Contributor role to the managed identity"
+    vars:
+      mid:
+        sh: az identity show --name {{.IDENTITY_NAME}} --resource-group {{.RG}} --query principalId -o tsv
+      said:
+        sh: az storage account show --name {{.STORAGE_ACCOUNT}} --query id -o tsv
+    cmds:
+      - echo "Assigning Storage Blob Data Contributor role to the managed identity"
+      - az role assignment create --assignee {{.mid}} --role "Storage Blob Data Contributor" --scope {{.said}}
+      #- az role assignment create --assignee $(az identity show --name {{.IDENTITY_NAME}} --resource-group {{.RG}} --query clientId -o tsv) --role "Storage Blob Data Contributor" --scope /subscriptions/$(az account show --query id -o tsv)/resourceGroups/{{.RG}}
+    silent: false
+
+  create_aks_cluster:
+    desc: create a new AKS cluster
+    deps: [create_resource_group, create_storage]
+    vars:
+      #mid:
+      #  sh: az identity show --name {{.IDENTITY_NAME}} --resource-group {{.RG}} --query id -o tsv
+    cmds:
+      #- az aks create --resource-group {{.RG}} --name {{.CLUSTER}} --enable-blob-driver --node-count 1 --assign-identity {{.mid}} --enable-managed-identity --enable-app-routing  --enable-oidc-issuer --enable-workload-identity --generate-ssh-keys --tier Free --node-vm-size Standard_D4ds_v4
+      - az aks create --resource-group {{.RG}} --name {{.CLUSTER}} --enable-blob-driver --node-count 1  --enable-managed-identity --enable-app-routing  --enable-oidc-issuer --enable-workload-identity --generate-ssh-keys --tier Free --node-vm-size Standard_D8d_v4 --attach-acr {{.ACR_NAME}} 
+    silent: false
+  
+
+
+  create_acr:
+    desc: "Create an ACR"
+    deps: [create_resource_group]
+    cmds:
+      - az acr create --resource-group {{.RG}} --name {{.ACR_NAME}} --sku Premium --location {{.LOCATION}} --admin-enabled true
+      - az acr login --name {{.ACR_NAME}}
+    silent: false
+
+  
+  build_acr_python_ai:
+    desc: "Build the ACR for Python AI"
+    cmds:
+      - az acr build --registry {{.ACR_NAME}} --image bmoussaud_python_ai:0.1 python-ai
+    silent: false
+
+  build_acr:
+    desc: "Build the ACR"
+    cmds:
+      - az acr build --registry {{.ACR_NAME}} --image storage_service:{{.IMAGE_VERSION}} src
+    silent: false
+  
+  build_image:
+    desc: "Build the image"
+    cmds:
+      - docker build -t storage_service:{{.IMAGE_VERSION}} src
+      - docker tag storage_service:{{.IMAGE_VERSION}} {{.ACR_NAME}}.azurecr.io/storage_service:{{.IMAGE_VERSION}}
+      - docker push {{.ACR_NAME}}.azurecr.io/storage_service:{{.IMAGE_VERSION}}
+    silent: false
+
+  deploy_app:
+    desc: "Deploy the application"
+    deps: [aks_get_credentials]
+    dotenv:
+      - .azure/dev/.env
+    cmds:
+      - echo "Deploying the application $SHARED_NAME and $CONTAINER_NAME"
+      - envsubst < k8s/storage.yaml | cat
+      - echo "Deploying the application $SHARED_NAME and $CONTAINER_NAME"
+      - envsubst < k8s/storage.yaml | kubectl apply -f -
+      - until kubectl get persistentvolumeclaim/storage-service-container-pvc -o jsonpath='{.status.phase}' | grep -q "Bound"; do echo "Waiting for PVC to be bound..."; sleep 5; done
+      - until kubectl get persistentvolumeclaim/storage-service-shared-pvc -o jsonpath='{.status.phase}' | grep -q "Bound"; do echo "Waiting for PVC to be bound..."; sleep 5; done
+      - envsubst < k8s/deployment-app.yaml | kubectl apply -f -
+      - kubectl get pods
+      - kubectl wait --for=condition=Available deployments.apps/deployment-storage-service   --timeout=60s
+      - kubectl wait --for=condition=Ready pods -l app=storage-service
+      - kubectl get pods -l app=storage-service
+      - envsubst < k8s/network.yaml | kubectl apply -f -
+    silent: false
+
+  undeploy_app:
+    desc: "Clean up resources"
+    cmds:
+      - cmd: kubectl delete deployment deployment-storage-service
+        ignore_error: true
+      - cmd: kubectl delete persistentvolumeclaim/storage-service-container-pvc
+        ignore_error: true
+      - cmd: kubectl delete persistentvolumeclaim/storage-service-shared-pvc
+        ignore_error: true
+      - cmd: kubectl delete persistentvolume/storage-service-pv-container
+        ignore_error: true
+      - cmd: kubectl delete persistentvolume/storage-service-pv-shared
+        ignore_error: true
+    
+  
+  app_service_ip:
+    desc: "Get the IP address of the application service"
+    cmds:
+      - kubectl get svc nginx --namespace app-routing-system -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+  
+  gen_test_command:
+    vars:
+      ip:
+        sh: kubectl get svc nginx --namespace app-routing-system -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+      port:
+        sh: kubectl get svc nginx --namespace app-routing-system -o jsonpath='{.spec.ports[0].port}'
+    cmds:
+      - echo "curl http://{{.ip}}:{{.port}}"
+      - echo "curl -X POST http://{{.ip}}:{{.port}}/write-content/shared"
+      - echo "curl -X POST http://{{.ip}}:{{.port}}/write-content/container"
+
+    
+  smoke_tests:
+    desc: "Run smoke tests"
+    vars:
+      ip:
+        sh: kubectl get svc nginx --namespace app-routing-system -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+      port:
+        sh: kubectl get svc nginx --namespace app-routing-system -o jsonpath='{.spec.ports[0].port}'
+    cmds:
+      - curl http://{{.ip}}:{{.port}}
+      - curl -X POST http://{{.ip}}:{{.port}}/write-content/shared
+      - curl -X POST http://{{.ip}}:{{.port}}/write-content/container
+
+
+
+  update_aks_cluster_role:
+    desc: "Update AKS cluster role: Storage Account Key Operator Service Role on the storage account"
+    vars:
+      kubelet_identity_client_id:
+        sh: az aks show --resource-group {{.RG}} --name {{.CLUSTER}} --query identityProfile.kubeletidentity.clientId -o tsv
+      said:
+        sh: az storage account show --name {{.STORAGE_ACCOUNT}} --query id -o tsv
+    cmds:
+      - az role assignment create --assignee {{.kubelet_identity_client_id}} --role "Storage Account Key Operator Service Role" --scope {{.said}}
+    silent: false
+
+  generate_env_file:
+    desc: "Generate .env file"
+    cmds:
+      - rm -f .env
+      - echo "RG={{.RG}}" > .env
+      - echo "CLUSTER={{.CLUSTER}}" >> .env
+      - echo "LOCATION={{.LOCATION}}" >> .env
+      - echo "STORAGE_ACCOUNT={{.STORAGE_ACCOUNT}}" >> .env
+      - echo "IDENTITY_NAME={{.IDENTITY_NAME}}" >> .env
+      - echo "SHARED_NAME={{.SHARED_NAME}}" >> .env
+      - echo "CONTAINER_NAME={{.CONTAINER_NAME}}" >> .env
+      - echo "ACR_NAME={{.ACR_NAME}}" >> .env
+      - echo "IMAGE_VERSION={{.IMAGE_VERSION}}" >> .env
+      #- echo "AZURE_CLIENT_ID_OLD=$(az identity show --name {{.IDENTITY_NAME}} --resource-group {{.RG}} --query clientId -o tsv)" >> .env
+      - echo "AZURE_CLIENT_ID=$(az aks show --resource-group {{.RG}} --name {{.CLUSTER}} --query identityProfile.kubeletidentity.clientId -o tsv)" >> .env
+      - cat .env
+    silent: false
+  
+  deploy_storage_samples_fileshare:
+    desc: "Deploy the storage class"
+    deps: [generate_env_file, aks_get_credentials]
+    cmds:
+      - envsubst < azurefile-shared-pv.yaml | kubectl apply -f -
+      - envsubst < azurefile-shared-pvc.yaml | kubectl apply -f -
+      - kubectl get persistentvolume/azurefile-pv-shared
+      - kubectl get persistentvolumeclaim/azurefile-shared-pvc
+      - until kubectl get persistentvolumeclaim/azurefile-shared-pvc -o jsonpath='{.status.phase}' | grep -q "Bound"; do echo "Waiting for PVC to be bound..."; sleep 5; done
+      - kubectl get persistentvolumeclaim/azurefile-shared-pvc
+      - kubectl apply -f deployment-shared.yaml
+      - kubectl get pods
+      - kubectl wait --for=condition=Available deployment/deployment-shared --timeout=60s
+      - kubectl wait --for=condition=Ready pods -l app=nginx-shared
+      - kubectl get pods -l app=nginx-shared
+    silent: false
+
+  undeploy_storage_samples_fileshare:
+    desc: "Clean up resources"
+    cmds:
+      - kubectl delete deployment deployment-shared
+      - kubectl delete persistentvolumeclaim/azurefile-shared-pvc
+      - kubectl delete persistentvolume/azurefile-pv-shared 
+    silent: false
+
+  deploy_storage_samples_container:
+    desc: "Deploy the storage class"
+    deps: [generate_env_file, aks_get_credentials]
+    cmds:
+      - envsubst < azurefile-container-pv.yaml | kubectl apply -f -
+      - envsubst < azurefile-container-pvc.yaml | kubectl apply -f -
+      - kubectl get persistentvolume/azurefile-pv-container
+      - kubectl get persistentvolumeclaim/azurefile-container-pvc
+      - until kubectl get persistentvolumeclaim/azurefile-container-pvc -o jsonpath='{.status.phase}' | grep -q "Bound"; do echo "Waiting for PVC to be bound..."; sleep 5; done
+      - kubectl get persistentvolumeclaim/azurefile-container-pvc
+      - kubectl apply -f deployment-container.yaml
+      - kubectl get pods
+      - kubectl wait --for=condition=Available deployment/deployment-container --timeout=60s
+      - kubectl wait --for=condition=Ready pods -l app=nginx-container
+      - kubectl get pods -l app=nginx-container 
+    silent: false
+     
+  undeploy_storage_samples_container:
+    desc: "Clean up resources"
+    cmds:
+      - kubectl delete deployment deployment-container
+      - kubectl delete persistentvolumeclaim/azurefile-container-pvc
+      - kubectl delete persistentvolume/azurefile-pv-container 
+    silent: false
+  
+ 
+  aks_get_credentials:
+    desc: "Get credentials for AKS cluster"
+    cmds:
+      - cmd: kubectl config delete-cluster {{.CLUSTER}} 
+        ignore_error: true
+      - cmd: kubectl config delete-user clusterUser_{{.RG}}_{{.CLUSTER}}
+        ignore_error: true
+      - az aks get-credentials --resource-group {{.RG}} --name {{.CLUSTER}}
+      - kubectl get nodes
+    silent: false
+  
+  cleanup:
+    desc: "Clean up"
+    cmds:
+      - az group delete --name {{.RG}} --yes --no-wait
+    silent: false
+  

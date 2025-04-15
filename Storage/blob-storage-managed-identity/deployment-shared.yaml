@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: nginx-shared
+  name: deployment-shared
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-shared
+  template:
+    metadata:
+      labels:
+        app: nginx-shared
+      name: deployment-shared
+    spec:
+      nodeSelector:
+        "kubernetes.io/os": linux
+      containers:
+        - name: deployment-shared
+          image: mcr.microsoft.com/mirror/docker/library/nginx:1.23
+          command:
+            - "/bin/sh"
+            - "-c"
+            - while true; do echo $(date) >> /mnt/shared/outfile.txt; sleep 1; done
+          volumeMounts:
+            - name: shared
+              mountPath: "/mnt/shared"
+              readOnly: false
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: azurefile-shared-pvc
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate

@@ -3,3 +3,7 @@
 # Azure AKS Tips
 
 Tips & Tricks about AKS
+
+```sh
+eval "$(task --completion zsh)"
+```

@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: nginx
+  name: deployment-container
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-container
+  template:
+    metadata:
+      labels:
+        app: nginx-container
+      name: deployment-container
+    spec:
+      nodeSelector:
+        "kubernetes.io/os": linux
+      containers:
+        - name: deployment-container
+          image: mcr.microsoft.com/mirror/docker/library/nginx:1.23
+          command:
+            - "/bin/sh"
+            - "-c"
+            - while true; do echo $(date) >> /mnt/container/outfile.txt; sleep 1; done
+          volumeMounts:
+            - name: container
+              mountPath: "/mnt/container"
+              readOnly: false
+      volumes:
+        - name: container
+          persistentVolumeClaim:
+            claimName: azurefile-container-pvc
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate

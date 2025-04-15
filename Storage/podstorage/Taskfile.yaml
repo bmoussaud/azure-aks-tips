@@ -1,0 +1,74 @@
+version: '3'
+# based on https://learn.microsoft.com/en-us/azure/aks/app-routing
+
+env:
+  RG: storage-rg
+  CLUSTER: storage-aks
+  LOCATION: francecentral
+dotenv: ['.env']
+
+tasks:
+  azure_auth:
+    desc: "Authenticate to Azure using Azure CLI"
+    cmds:
+      - az login
+    silent: false
+
+  azure_config:
+    desc: "Configure Azure CLI"
+    cmds:
+      - echo "Azure CLI configured"
+  
+  create_resource_group:
+    desc: "Create a resource group ${RG} in $LOCATION"
+    cmds:
+      - az group create --name $RG --location $LOCATION
+    silent: false
+  
+  new_aks_cluster:
+    desc: create a new AKS cluster
+    deps: [create_resource_group, azure_config]
+    cmds:
+      - az aks create --resource-group $RG --name $CLUSTER --node-count 1 --enable-app-routing  --enable-oidc-issuer --enable-workload-identity --enable-managed-identity --generate-ssh-keys --tier Free --node-vm-size Standard_D4ds_v4
+    silent: false
+  
+  configure_storage_class:
+    desc: "Configure the storage class"
+    # https://learn.microsoft.com/en-us/azure/aks/istio-deploy-ingress#enable-external-ingress-gateway
+    cmds:
+      - az aks update --enable-blob-driver --name $CLUSTER  --resource-group $RG
+    silent: false
+
+  deploy_sample:
+    desc: "Deploy sample applications"
+    deps: [aks_get_credentials]
+    cmds:
+      - #kubectl create namespace aks-store
+      - kubectl apply -f blob-nfs-pvc.yaml
+      - cat blob-nfs-pvc.yaml
+      - kubectl get pvc azure-blob-storage
+      - kubectl apply -f blob-pod.yaml
+      - cat blob-pod.yaml
+      - kubectl get pods
+      - kubectl get pv
+      - kubectl get pvc
+  aks_get_credentials:
+    desc: "Get credentials for AKS cluster"
+    cmds:
+      - az aks get-credentials --resource-group {{.RG}} --name {{.CLUSTER}}
+      - kubectl get nodes
+    silent: false
+  
+  test_application:
+    desc: "Test the deployment"
+    cmds:
+      - kubectl exec mypod -- touch /mnt/blob/test.txt
+      - kubectl exec mypod -- find /mnt/blob 
+      - kubectl exec mypod -- ls -l /mnt/blob/test.txt
+
+  cleanup:
+    desc: "Clean up"
+    cmds:
+      - az group delete --name {{.RG}} --yes --no-wait
+    silent: false
+  
